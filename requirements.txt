@@ -1,9 +1,15 @@
 scikit-image
 opencv-python
 numpy
+
+# for jupyter notebook support
+ipykernel
+matplotlib
+
+# for nms
 torch
 torchvision
-matplotlib
-ipykernel
+
+# supported runtimes
 onnxruntime
-tensorflow
+tflite_runtime

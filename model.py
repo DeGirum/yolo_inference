@@ -4,7 +4,7 @@ import numpy as np
 import math
 from results import Results
 import json
-from torch import Tensor  # torch only used for nms
+from torch import Tensor
 from torchvision.ops import nms
 from typing import Optional, Union
 from numpy.typing import ArrayLike
