@@ -41,9 +41,3 @@ def save_results_coco_json(results, jdict, image_id, class_map):
                       'category_id': class_map[result['category_id']],
                       'bbox': [float(x) for x in box],
                       'score': float(result['score'])})
-
-
-def get_config_json(model_name: str):
-    dataset = model_name.split('_')[2].split('-')[0]
-    with open(f"./ultralytics_eval_configs{dataset}.json", "r") as f:
-        return json.load(f)

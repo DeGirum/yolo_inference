@@ -39,7 +39,7 @@ class Model:
             import onnxruntime as ort
             self.interpreter = ort.InferenceSession(self.model_path)
         elif self.runtime == "tflite":
-            import tflite_runtime.interpreter as tflite
+            import tensorflow.lite as tflite
             if device == 'EDGETPU':
                 delegate = None
                 try:
@@ -94,12 +94,12 @@ class Model:
         
     def get_input_quant_params(self) -> tuple[float]:
         assert self.runtime == 'tflite'
-        assert self.get_input_dtype() == np.uint8
+        assert self.get_input_dtype() == np.uint8 or self.get_input_dtype() == np.int8
         return self.interpreter.get_input_details()[0]['quantization']
     
     def get_output_quant_params(self):
         assert self.runtime == 'tflite'
-        assert self.get_input_dtype() == np.uint8
+        assert self.get_input_dtype() == np.uint8 or self.get_input_dtype() == np.int8
         return [details['quantization'] for details in self.interpreter.get_output_details()]
 
     def preprocess(self, img_path:str, pad_color:Optional[tuple[int]]=(0, 0, 0)) -> ArrayLike:
@@ -115,10 +115,10 @@ class Model:
         img_arr = cv2.copyMakeBorder(img_arr, dh // 2, -(dh // -2), dw // 2, -(dw // -2), cv2.BORDER_CONSTANT, value=pad_color)  # letterboxing
         img_arr = img_arr[np.newaxis, ...]  # add batch dim
         img_arr = img_arr.astype(np.float32) / 255.0  # normalize
-        if self.get_input_dtype() == np.uint8:
+        if self.get_input_dtype() == np.uint8 or self.get_input_dtype() == np.int8:
             scale, zero = self.get_input_quant_params()
             img_arr = img_arr / scale + zero
-            img_arr = img_arr.astype(np.uint8)
+            img_arr = img_arr.astype(self.get_input_dtype())
         if self.runtime == "onnx":
             return np.transpose(img_arr, (0, 3, 1, 2))
         return img_arr
