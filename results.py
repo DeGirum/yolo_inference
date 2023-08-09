@@ -1,5 +1,5 @@
 import numpy as np
-from skimage import io
+from skimage.io import imread
 import cv2
 from typing import Optional, Any
 from numpy.typing import ArrayLike
@@ -9,7 +9,7 @@ class Results:
         self.data = data
         self.labels_dict = labels_dict
         self.img_path = img_path
-        self.orig_img = io.imread(img_path)
+        self.orig_img = imread(img_path)
         self.img_h = self.orig_img.shape[0]
         self.img_w = self.orig_img.shape[1]
         self.model_input_shape = model_input_shape
@@ -49,8 +49,8 @@ class Results:
         return out
     
     def get_image_overlay(self) -> ArrayLike:
-        assert self.img_path is not None
-        img = io.imread(self.img_path)
+        assert self.orig_img is not None
+        img = self.orig_img.copy()
         for res in self.results:
             l, t, r, b = res['bbox'].astype(np.int32)
             label = f'{res["label"]} {res["score"] : 0.3f}'

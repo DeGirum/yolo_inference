@@ -1,4 +1,4 @@
-from skimage import io
+from skimage.io import imread
 import cv2
 import numpy as np
 import math
@@ -105,7 +105,9 @@ class Model:
         return [details['quantization'] for details in self.interpreter.get_output_details()]
 
     def preprocess(self, img_path:str, pad_color:Optional[tuple[int]]=(0, 0, 0)) -> ArrayLike:
-        img_arr = io.imread(img_path)
+        img_arr = imread(img_path)
+        if len(img_arr.shape) == 2:
+            img_arr = cv2.cvtColor(img_arr, cv2.COLOR_GRAY2RGB)
         orig_h, orig_w = img_arr.shape[:-1]
         input_h, input_w = self.get_input_img_shape()
         ratio = min(input_h / orig_h, input_w / orig_w)
