@@ -1,26 +1,4 @@
-import requests
-import json
-import tempfile
-import os
 import numpy as np
-from contextlib import contextmanager
-
-@contextmanager
-def annotations_accessor(url:str):
-    """Annotation accessor context manager: downloads annotations into local temporary file and returns its name
-    
-    - `url`: annotations url 
-    """
-    r = requests.get(url)
-    r.raise_for_status()
-    fd, fname = tempfile.mkstemp()
-    try:
-        with os.fdopen(fd, 'w') as f:
-            json.dump(r.json(), f)
-        yield fname
-    finally:
-        os.unlink(fname)
-
 
 def xyxy2xywh(x):
     # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] where xy1=top-left, xy2=bottom-right
