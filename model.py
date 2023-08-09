@@ -7,16 +7,29 @@ import json
 from torch import Tensor  # torch only used for nms
 from torchvision.ops import nms
 from typing import Optional, Union
-import os
 from numpy.typing import ArrayLike
 
+
 class Model:
-    def __init__(self, model_path:str, do_postprocessing:bool=True, runtime:Optional[str]=None, labels:Optional[Union[str, dict]]=None, conf_threshold:float=0.25, iou_threshold:float=0.75):
+    def __init__(self, 
+                 model_path:str, 
+                 do_postprocessing:bool=True, 
+                 do_bbox_decoding:bool=True, 
+                 runtime:Optional[str]=None, 
+                 labels:Optional[Union[str, dict]]=None, 
+                 conf_threshold:float=0.25, 
+                 iou_threshold:float=0.75, 
+                 device:str='CPU',
+                 postprocessor_inputs:list=[0,1,2,3,4,5]
+                 ):
+        
         self.model_path = model_path
         self.runtime = model_path.split(".")[-1] if runtime is None else runtime
         self.do_postprocessing = do_postprocessing
+        self.do_bbox_decoding = do_bbox_decoding
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
+        self.postprocessor_inputs = postprocessor_inputs if do_bbox_decoding else [0]
         if isinstance(labels, str):
             with open(labels) as f:
                 self.labels = json.load(f)
@@ -27,17 +40,26 @@ class Model:
             import onnxruntime as ort
             self.interpreter = ort.InferenceSession(self.model_path)
         elif self.runtime == "tflite":
-            import tensorflow.lite as tflite
-            self.interpreter = tflite.Interpreter(self.model_path)
+            import tflite_runtime.interpreter as tflite
+            if device == 'EDGETPU':
+                delegate = None
+                try:
+                    delegate = tflite.load_delegate('libedgetpu.so.1')
+                    self.interpreter = tflite.Interpreter(self.model_path, experimental_delegates=[delegate])
+                except:
+                    raise FileNotFoundError("EdgeTPU delegate not found")
+            else:
+                self.interpreter = tflite.Interpreter(self.model_path)
         else:
             raise NotImplementedError(self.runtime)
+        
 
     def __call__(self, img_path:str) -> list[ArrayLike]:
         self.img_path = img_path
         model_input = self.preprocess(img_path)
         model_outputs = self.run_inference(model_input)
         if self.do_postprocessing:
-            return self.postprocess(model_outputs)
+            return self.postprocess([model_outputs[i] for i in self.postprocessor_inputs])
         return model_outputs
 
     def get_input_img_shape(self) -> tuple[int]:
@@ -46,6 +68,28 @@ class Model:
         elif self.runtime == "tflite":
             n, h, w, c = self.interpreter.get_input_details()[0]["shape"]
         return h, w
+
+    def get_input_dtype(self):
+        if self.runtime == "onnx":
+            return np.float32  # only support float inputs/outputs for onnx
+        elif self.runtime == "tflite":
+            return self.interpreter.get_input_details()[0]["dtype"]
+        
+    def get_output_dtype(self):
+        if self.runtime == "onnx":
+            return np.float32  # only support float inputs/outputs for onnx
+        elif self.runtime == "tflite":
+            return self.interpreter.get_output_details()[0]["dtype"]
+        
+    def get_input_quant_params(self) -> tuple[float]:
+        assert self.runtime == 'tflite'
+        assert self.get_input_dtype() == np.uint8
+        return self.interpreter.get_input_details()[0]['quantization']
+    
+    def get_output_quant_params(self):
+        assert self.runtime == 'tflite'
+        assert self.get_input_dtype() == np.uint8
+        return [details['quantization'] for details in self.interpreter.get_output_details()]
 
     def preprocess(self, img_path:str, pad_color:Optional[tuple[int]]=(0, 0, 0)) -> ArrayLike:
         img_arr = io.imread(img_path)
@@ -57,7 +101,11 @@ class Model:
         dw, dh = input_w - new_w, input_h - new_h
         img_arr = cv2.copyMakeBorder(img_arr, dh // 2, -(dh // -2), dw // 2, -(dw // -2), cv2.BORDER_CONSTANT, value=pad_color)  # letterboxing
         img_arr = img_arr[np.newaxis, ...]  # add batch dim
-        img_arr = img_arr.astype(np.float32) / 255.0  # normalize if float model
+        img_arr = img_arr.astype(np.float32) / 255.0  # normalize
+        if self.get_input_dtype() == np.uint8:
+            scale, zero = self.get_input_quant_params()
+            img_arr = img_arr / scale + zero
+            img_arr = img_arr.astype(np.uint8)
         if self.runtime == "onnx":
             return np.transpose(img_arr, (0, 3, 1, 2))
         return img_arr
@@ -84,25 +132,35 @@ class Model:
         return stride, a
 
     def postprocess(self, model_outputs:list[ArrayLike]) -> Results:
-        assert len(model_outputs) == 6
-        num_classes = model_outputs[3].shape[-1]
-        anchors_per_stride = model_outputs[0].shape[-1] // 4
-        out = []
-        for bbox, cls in zip(model_outputs[:3], model_outputs[3:]):
-            assert bbox.shape[0] == 1
-            assert bbox.shape[1] == cls.shape[1]
-            assert bbox.shape[2] == 4 * anchors_per_stride
-            assert cls.shape[2] == num_classes
-            bbox = np.exp(bbox.reshape((1, -1, 4, anchors_per_stride)))
-            bbox /= np.sum(bbox, axis=3, keepdims=True)  # softmax
-            bbox = np.sum(bbox * np.arange(anchors_per_stride), axis=3)  # conv
-            slice_a, slice_b = bbox[:, :, 0:2], bbox[:, :, 2:4]
-            stride, anchor_grid = self.generate_xy_anchor_grid(bbox.shape[1])
-            xy = (anchor_grid + (slice_b - slice_a) / 2) * stride
-            wh = (slice_b + slice_a) * stride
-            cls = 1.0 / (1.0 + np.exp(-cls))  # sigmoid on class probs
-            out.append(np.concatenate((xy, wh, cls), axis=2))
-        output = np.concatenate(out, axis=1)
+        if self.get_output_dtype() == np.uint8:  # dequantize
+            quant_params = [self.get_output_quant_params()[i] for i in self.postprocessor_inputs]
+            for i in range(len(model_outputs)):
+                scale, zero = quant_params[i]
+                model_outputs[i] = (model_outputs[i].astype(np.float32) - zero) * scale
+        if self.do_bbox_decoding:
+            assert len(model_outputs) == 6
+            num_classes = model_outputs[3].shape[-1]
+            anchors_per_stride = model_outputs[0].shape[-1] // 4
+            out = []
+            for bbox, cls in zip(model_outputs[:3], model_outputs[3:]):
+                assert bbox.shape[0] == 1
+                assert bbox.shape[1] == cls.shape[1]
+                assert bbox.shape[2] == 4 * anchors_per_stride
+                assert cls.shape[2] == num_classes
+                bbox = np.exp(bbox.reshape((1, -1, 4, anchors_per_stride)))
+                bbox /= np.sum(bbox, axis=3, keepdims=True)  # softmax
+                bbox = np.sum(bbox * np.arange(anchors_per_stride), axis=3)  # conv
+                slice_a, slice_b = bbox[:, :, 0:2], bbox[:, :, 2:4]
+                stride, anchor_grid = self.generate_xy_anchor_grid(bbox.shape[1])
+                xy = (anchor_grid + (slice_b - slice_a) / 2) * stride
+                wh = (slice_b + slice_a) * stride
+                cls = 1.0 / (1.0 + np.exp(-cls))  # sigmoid on class probs
+                out.append(np.concatenate((xy, wh, cls), axis=2))
+            output = np.concatenate(out, axis=1)
+        else:
+            assert len(model_outputs) == 1
+            output = np.transpose(model_outputs[0], (0, 2, 1))
+            print(output.shape)
         output = output[:, np.where(np.max(output[0, :, 4:], axis=1) > self.conf_threshold)[0], :]
         output = self.non_max_suppression(output)
         return Results(output, img_path=self.img_path, model_input_shape=self.get_input_img_shape(), labels_dict=self.labels)
