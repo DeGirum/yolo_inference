@@ -53,5 +53,9 @@ class Results:
         img = io.imread(self.img_path)
         for res in self.results:
             l, t, r, b = res['bbox'].astype(np.int32)
+            label = f'{res["label"]} {res["score"] : 0.3f}'
             img = cv2.rectangle(img, (l, b), (r, t), color=(255,255,0), thickness=3)
+            (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+            img = cv2.rectangle(img, (l, t - 20), (l + w, t), (255,255,0), -1)
+            img = cv2.putText(img, label, (l, t - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 1)
         return img
