@@ -20,7 +20,7 @@ class Model:
                  conf_threshold:float=0.25, 
                  iou_threshold:float=0.75, 
                  device:str='CPU',
-                 postprocessor_inputs:list=[0,1,2,3,4,5]
+                 postprocessor_inputs:Optional[list[int]]=None
                  ):
         
         self.model_path = model_path
@@ -29,13 +29,13 @@ class Model:
         self.do_bbox_decoding = do_bbox_decoding
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
-        self.postprocessor_inputs = postprocessor_inputs if do_bbox_decoding else [0]
+        self.infer_postprocessor_inputs = postprocessor_inputs is None
+        self.postprocessor_inputs = postprocessor_inputs
         if isinstance(labels, str):
             with open(labels) as f:
                 self.labels = json.load(f)
         else:
             self.labels = labels
-
         if self.runtime == "onnx":
             import onnxruntime as ort
             self.interpreter = ort.InferenceSession(self.model_path)
@@ -59,8 +59,21 @@ class Model:
         model_input = self.preprocess(img_path)
         model_outputs = self.run_inference(model_input)
         if self.do_postprocessing:
-            return self.postprocess([model_outputs[i] for i in self.postprocessor_inputs])
+            self.postprocessor_inputs = self.infer_postprocessor_input_order(model_outputs) if self.infer_postprocessor_inputs else self.postprocessor_inputs
+            quant_params = None if self.get_output_dtype() == np.float32 else [self.get_output_quant_params()[i] for i in self.postprocessor_inputs]
+            return self.postprocess([model_outputs[i] for i in self.postprocessor_inputs], quant_params=quant_params)
         return model_outputs
+    
+    def infer_postprocessor_input_order(self, model_outputs: list[ArrayLike]) -> list[int]:
+        if not self.do_bbox_decoding:
+            return [0]
+        num_classes = -1
+        for o in model_outputs:
+            if o.shape[2] != 64:
+                num_classes = o.shape[2]
+                break
+        assert num_classes != -1, "cannot infer postprocessor inputs via output shape if there are 64 classes"
+        return [i for i,_ in sorted(enumerate(model_outputs), key = lambda x: (x[1].shape[2] if num_classes > 64 else -x[1].shape[2], -x[1].shape[1]))]
 
     def get_input_img_shape(self) -> tuple[int]:
         if self.runtime == "onnx":
@@ -131,9 +144,8 @@ class Model:
         a = np.stack((np.tile(np.arange(maxw), maxh), np.repeat(np.arange(maxh), maxw)), axis=-1) + 0.5
         return stride, a
 
-    def postprocess(self, model_outputs:list[ArrayLike]) -> Results:
-        if self.get_output_dtype() == np.uint8:  # dequantize
-            quant_params = [self.get_output_quant_params()[i] for i in self.postprocessor_inputs]
+    def postprocess(self, model_outputs:list[ArrayLike], quant_params:Optional[list[tuple[float]]]=None) -> Results:
+        if quant_params is not None:  # dequantize
             for i in range(len(model_outputs)):
                 scale, zero = quant_params[i]
                 model_outputs[i] = (model_outputs[i].astype(np.float32) - zero) * scale
@@ -160,7 +172,6 @@ class Model:
         else:
             assert len(model_outputs) == 1
             output = np.transpose(model_outputs[0], (0, 2, 1))
-            print(output.shape)
         output = output[:, np.where(np.max(output[0, :, 4:], axis=1) > self.conf_threshold)[0], :]
         output = self.non_max_suppression(output)
         return Results(output, img_path=self.img_path, model_input_shape=self.get_input_img_shape(), labels_dict=self.labels)
