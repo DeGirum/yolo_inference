@@ -43,7 +43,7 @@ class Model:
             if device == 'EDGETPU':
                 delegate = None
                 try:
-                    delegate = tflite.load_delegate('libedgetpu.so.1')
+                    delegate = tflite.experimental.load_delegate('libedgetpu.so.1')
                     self.interpreter = tflite.Interpreter(self.model_path, experimental_delegates=[delegate])
                 except:
                     raise FileNotFoundError("EdgeTPU delegate not found")
