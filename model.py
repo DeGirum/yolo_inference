@@ -9,7 +9,6 @@ from torchvision.ops import nms
 from typing import Optional, Union
 from numpy.typing import ArrayLike
 
-
 class Model:
     def __init__(self, 
                  model_path:str, 
@@ -53,7 +52,6 @@ class Model:
         else:
             raise NotImplementedError(self.runtime)
         
-
     def __call__(self, img_path:str) -> list[ArrayLike]:
         self.img_path = img_path
         model_input = self.preprocess(img_path)
@@ -173,7 +171,9 @@ class Model:
             output = np.concatenate(out, axis=1)
         else:
             assert len(model_outputs) == 1
+            input_h, input_w = self.get_input_img_shape()
             output = np.transpose(model_outputs[0], (0, 2, 1))
+            output[:,:,:4] *= (input_w, input_h, input_w, input_h)  # ultralytics export has box coords normalized
         output = output[:, np.where(np.max(output[0, :, 4:], axis=1) > self.conf_threshold)[0], :]
         output = self.non_max_suppression(output)
         return Results(output, img_path=self.img_path, model_input_shape=self.get_input_img_shape(), labels_dict=self.labels)
