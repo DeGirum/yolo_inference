@@ -66,8 +66,8 @@ Model(
           5. probability data [1, c, num_classes]
         '''
         # NOTE: postprocessor input inference does not work with models that have 64 classes, 
-        # as it relies on the differences in output shapes to check the order. for these models, you 
-        # must input the indices manually
+        # as it relies on the differences in output shapes to check the order. for these models, 
+        # you must input the indices manually
 
     )
 ```
