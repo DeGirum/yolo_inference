@@ -1,0 +1,9 @@
+scikit-image
+opencv-python
+numpy
+torch
+torchvision
+matplotlib
+ipykernel
+onnxruntime
+tensorflow
