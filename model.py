@@ -11,7 +11,7 @@ from numpy.typing import ArrayLike
 import platform
 
 EDGETPU_SHARED_LIB = {
-  'Linux': 'libedgetpu.so.1',
+  'Linux': 'libedgetpu.so.1.0',
   'Darwin': 'libedgetpu.1.dylib',
   'Windows': 'edgetpu.dll'
 }[platform.system()]
@@ -50,8 +50,10 @@ class Model:
             try:
                 delegate = tflite.experimental.load_delegate(EDGETPU_SHARED_LIB)
                 self.interpreter = tflite.Interpreter(self.model_path, experimental_delegates=[delegate])
-            except:
-                print('EdgeTPU delegate not found')
+                print('EdgeTPU delegate found!')
+            except Exception as e:
+                print(e)
+                print('EdgeTPU delegate NOT found')
                 self.interpreter = tflite.Interpreter(self.model_path)                
         else:
             raise NotImplementedError(self.runtime)
