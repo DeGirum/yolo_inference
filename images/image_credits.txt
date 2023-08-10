@@ -5,3 +5,4 @@ ThreePersons: https://pixabay.com/photos/kettlebell-fitness-crossfit-fit-3293481
 TwoCats.jpg: https://pixabay.com/photos/animal-cat-couple-curious-cute-21584/
 LivingRoom.jpg: https://pixabay.com/photos/porch-fireplace-design-house-1967855/
 FirePlace.jpg: https://pixabay.com/photos/fireplace-mantel-living-room-cozy-558985/
+3cats.jpg: https://media.istockphoto.com/id/537506462/photo/three-cats-laying-together-on-white.jpg?s=612x612&w=0&k=20&c=uLe3k5ojxp5RTQGwBQXV5Sj9UYT7kYdpSi_urcnIyRU= 
