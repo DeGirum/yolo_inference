@@ -8,6 +8,13 @@ from torch import Tensor
 from torchvision.ops import nms
 from typing import Optional, Union
 from numpy.typing import ArrayLike
+import platform
+
+EDGETPU_SHARED_LIB = {
+  'Linux': 'libedgetpu.so.1',
+  'Darwin': 'libedgetpu.1.dylib',
+  'Windows': 'edgetpu.dll'
+}[platform.system()]
 
 class Model:
     def __init__(self, 
@@ -18,12 +25,11 @@ class Model:
                  labels:Optional[Union[str, dict]]=None, 
                  conf_threshold:float=0.25, 
                  iou_threshold:float=0.75, 
-                 device:str='CPU',
                  postprocessor_inputs:Optional[list[int]]=None
                  ):
         
         self.model_path = model_path
-        self.runtime = model_path.split(".")[-1] if runtime is None else runtime
+        self.runtime = model_path.split('.')[-1] if runtime is None else runtime
         self.do_postprocessing = do_postprocessing
         self.do_bbox_decoding = do_bbox_decoding
         self.conf_threshold = conf_threshold
@@ -35,20 +41,18 @@ class Model:
                 self.labels = json.load(f)
         else:
             self.labels = labels
-        if self.runtime == "onnx":
+        if self.runtime == 'onnx':
             import onnxruntime as ort
             self.interpreter = ort.InferenceSession(self.model_path)
-        elif self.runtime == "tflite":
+        elif self.runtime == 'tflite':
             import tensorflow.lite as tflite
-            if device == 'EDGETPU':
-                delegate = None
-                try:
-                    delegate = tflite.experimental.load_delegate('libedgetpu.so.1')
-                    self.interpreter = tflite.Interpreter(self.model_path, experimental_delegates=[delegate])
-                except:
-                    raise FileNotFoundError("EdgeTPU delegate not found")
-            else:
-                self.interpreter = tflite.Interpreter(self.model_path)
+            delegate = None
+            try:
+                delegate = tflite.experimental.load_delegate(EDGETPU_SHARED_LIB)
+                self.interpreter = tflite.Interpreter(self.model_path, experimental_delegates=[delegate])
+            except:
+                print('EdgeTPU delegate not found')
+                self.interpreter = tflite.Interpreter(self.model_path)                
         else:
             raise NotImplementedError(self.runtime)
         
@@ -70,27 +74,27 @@ class Model:
             if o.shape[2] != 64:
                 num_classes = o.shape[2]
                 break
-        assert num_classes != -1, "cannot infer postprocessor inputs via output shape if there are 64 classes"
+        assert num_classes != -1, 'cannot infer postprocessor inputs via output shape if there are 64 classes'
         return [i for i,_ in sorted(enumerate(model_outputs), key = lambda x: (x[1].shape[2] if num_classes > 64 else -x[1].shape[2], -x[1].shape[1]))]
 
     def get_input_img_shape(self) -> tuple[int]:
-        if self.runtime == "onnx":
+        if self.runtime == 'onnx':
             n, c, h, w = self.interpreter.get_inputs()[0].shape
-        elif self.runtime == "tflite":
-            n, h, w, c = self.interpreter.get_input_details()[0]["shape"]
+        elif self.runtime == 'tflite':
+            n, h, w, c = self.interpreter.get_input_details()[0]['shape']
         return h, w
 
     def get_input_dtype(self):
-        if self.runtime == "onnx":
+        if self.runtime == 'onnx':
             return np.float32  # only support float inputs/outputs for onnx
-        elif self.runtime == "tflite":
-            return self.interpreter.get_input_details()[0]["dtype"]
+        elif self.runtime == 'tflite':
+            return self.interpreter.get_input_details()[0]['dtype']
         
     def get_output_dtype(self):
-        if self.runtime == "onnx":
+        if self.runtime == 'onnx':
             return np.float32  # only support float inputs/outputs for onnx
-        elif self.runtime == "tflite":
-            return self.interpreter.get_output_details()[0]["dtype"]
+        elif self.runtime == 'tflite':
+            return self.interpreter.get_output_details()[0]['dtype']
         
     def get_input_quant_params(self) -> tuple[float]:
         assert self.runtime == 'tflite'
@@ -119,20 +123,20 @@ class Model:
             scale, zero = self.get_input_quant_params()
             img_arr = img_arr / scale + zero
             img_arr = img_arr.astype(self.get_input_dtype())
-        if self.runtime == "onnx":
+        if self.runtime == 'onnx':
             return np.transpose(img_arr, (0, 3, 1, 2))
         return img_arr
 
     def run_inference(self, model_input:ArrayLike) -> list[ArrayLike]:
-        if self.runtime == "onnx":
-            assert len(self.interpreter.get_inputs()) == 1, "only 1 input tensor supported"
+        if self.runtime == 'onnx':
+            assert len(self.interpreter.get_inputs()) == 1, 'only 1 input tensor supported'
             return self.interpreter.run(None, {self.interpreter.get_inputs()[0].name: model_input})
-        elif self.runtime == "tflite":
-            assert len(self.interpreter.get_input_details()) == 1, "only 1 input tensor supported"
+        elif self.runtime == 'tflite':
+            assert len(self.interpreter.get_input_details()) == 1, 'only 1 input tensor supported'
             self.interpreter.allocate_tensors()
-            self.interpreter.set_tensor(self.interpreter.get_input_details()[0]["index"], model_input)
+            self.interpreter.set_tensor(self.interpreter.get_input_details()[0]['index'], model_input)
             self.interpreter.invoke()
-            return [self.interpreter.get_tensor(details["index"]) for details in self.interpreter.get_output_details()]
+            return [self.interpreter.get_tensor(details['index']) for details in self.interpreter.get_output_details()]
         else:
             raise NotImplementedError(self.runtime)
 

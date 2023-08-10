@@ -50,9 +50,6 @@ Model(
     iou_threshold:float=0.75, 
         # IOU threshold for non-max suppression
 
-    device:str='CPU',
-        # device to perform inference on. currently only support 'CPU' or 'EDGETPU'
-
     postprocessor_inputs:Optional[list[int]]=None
         # list of indices to rearrange model outputs before passing to postprocessor
         # if None, infer order of postprocessor inputs via model output shape
