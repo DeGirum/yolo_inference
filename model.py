@@ -4,8 +4,6 @@ import numpy as np
 import math
 from results import Results
 import json
-from torch import Tensor
-from torchvision.ops import nms
 from typing import Optional, Union
 from numpy.typing import ArrayLike
 import platform
@@ -27,7 +25,6 @@ class Model:
                  iou_threshold:float=0.75, 
                  postprocessor_inputs:Optional[list[int]]=None
                  ):
-        
         self.model_path = model_path
         self.runtime = model_path.split('.')[-1] if runtime is None else runtime
         self.do_postprocessing = do_postprocessing
@@ -46,13 +43,11 @@ class Model:
             self.interpreter = ort.InferenceSession(self.model_path)
         elif self.runtime == 'tflite':
             import tensorflow.lite as tflite
-            delegate = None
             try:
                 delegate = tflite.experimental.load_delegate(EDGETPU_SHARED_LIB)
                 self.interpreter = tflite.Interpreter(self.model_path, experimental_delegates=[delegate])
                 print('EdgeTPU delegate found!')
             except Exception as e:
-                print(e)
                 print('EdgeTPU delegate NOT found')
                 self.interpreter = tflite.Interpreter(self.model_path)                
         else:
@@ -126,7 +121,7 @@ class Model:
             img_arr = img_arr / scale + zero
             img_arr = img_arr.astype(self.get_input_dtype())
         if self.runtime == 'onnx':
-            return np.transpose(img_arr, (0, 3, 1, 2))
+            return np.transpose(img_arr, (0, 3, 1, 2))  # nhwc --> nchw
         return img_arr
 
     def run_inference(self, model_input:ArrayLike) -> list[ArrayLike]:
@@ -181,11 +176,22 @@ class Model:
             output = np.transpose(model_outputs[0], (0, 2, 1))
             output[:,:,:4] *= (input_w, input_h, input_w, input_h)  # ultralytics export has box coords normalized
         output = output[:, np.where(np.max(output[0, :, 4:], axis=1) > self.conf_threshold)[0], :]
+        output[0,:,:4] = np.hstack((output[0,:,:2] - output[0,:,2:4] / 2, output[0,:,:2] + output[0,:,2:4] / 2))  # xywh to xyxy
         output = self.non_max_suppression(output)
         return Results(output, img_path=self.img_path, model_input_shape=self.get_input_img_shape(), labels_dict=self.labels)
 
     def non_max_suppression(self, data:ArrayLike) -> ArrayLike:
         scores = np.max(data[0, :, 4:], axis=1).reshape(-1)
-        boxes = np.hstack((data[0,:,:2] - data[0,:,2:4] / 2, data[0,:,:2] + data[0,:,2:4] / 2))  # xywh to xyxy
-        idxs = nms(Tensor(boxes), Tensor(scores), iou_threshold=self.iou_threshold).numpy()
-        return data[:, idxs, :]
+        areas = (data[0,:,2] - data[0,:,0]) * (data[0,:,3] - data[0,:,1])
+        index_array = scores.argsort()[::-1]
+        keep = []
+        while index_array.size > 0:
+            keep.append(index_array[0])
+            x1 = np.maximum(data[0,index_array[0],0], data[0,index_array,0])
+            y1 = np.maximum(data[0,index_array[0],1], data[0,index_array,1])
+            x2 = np.minimum(data[0,index_array[0],2], data[0,index_array,2])
+            y2 = np.minimum(data[0,index_array[0],3], data[0,index_array,3])
+            inter = np.maximum(0, (x2 - x1) * (y2 - y1))
+            iou = inter / (areas[index_array[0]] + areas[index_array] - inter)
+            index_array = index_array[np.where(iou <= self.iou_threshold)]
+        return data[:,keep,:]

@@ -30,9 +30,9 @@ class Results:
         new_boxes = np.zeros(boxes.shape)
         new_boxes[:,0] = np.clip((boxes[:,0] - self.pad_left) / self.ratio, a_min=0, a_max=self.img_w)
         new_boxes[:,1] = np.clip((boxes[:,1] - self.pad_top) / self.ratio, a_min=0, a_max=self.img_h)
-        new_boxes[:,2] = np.clip(boxes[:,2] / self.ratio, a_min=0, a_max=self.img_w)
-        new_boxes[:,3] = np.clip(boxes[:,3] / self.ratio, a_min=0, a_max=self.img_h)
-        return np.hstack((new_boxes[:, :2] - new_boxes[:,2:4] / 2, new_boxes[:, :2] + new_boxes[:,2:4] / 2))  # xywh to xyxy
+        new_boxes[:,2] = np.clip((boxes[:,2] - self.pad_left) / self.ratio, a_min=0, a_max=self.img_w)
+        new_boxes[:,3] = np.clip((boxes[:,3] - self.pad_top) / self.ratio, a_min=0, a_max=self.img_h)
+        return new_boxes
 
     def get_results_dict(self) -> list[dict[str, Any]]:
         data = self.data[0, :, :]

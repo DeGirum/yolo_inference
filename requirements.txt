@@ -6,10 +6,6 @@ numpy
 ipykernel
 matplotlib
 
-# for nms
-torch
-torchvision
-
 # supported runtimes
 onnxruntime
 tensorflow
