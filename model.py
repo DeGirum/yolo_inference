@@ -185,16 +185,12 @@ class Model:
 
     def non_max_suppression(self, data:ArrayLike) -> ArrayLike:
         scores = np.max(data[0, :, 4:], axis=1).reshape(-1)
-        areas = (data[0,:,2] - data[0,:,0]) * (data[0,:,3] - data[0,:,1])
+        areas = (data[0,:,2] - data[0,:,0]) * (data[0,:,3] - data[0,:,1])  # areas of all the bounding boxes
         index_array = scores.argsort()[::-1]
         keep = []
         while index_array.size > 0:
             keep.append(index_array[0])
-            x1 = np.maximum(data[0,index_array[0],0], data[0,index_array,0])
-            y1 = np.maximum(data[0,index_array[0],1], data[0,index_array,1])
-            x2 = np.minimum(data[0,index_array[0],2], data[0,index_array,2])
-            y2 = np.minimum(data[0,index_array[0],3], data[0,index_array,3])
-            inter = np.maximum(0, (x2 - x1) * (y2 - y1))
-            iou = inter / (areas[index_array[0]] + areas[index_array] - inter)
+            intersection = np.maximum(0, np.prod(np.minimum(data[0,index_array[0],2:4], data[0,index_array,2:4]) - np.maximum(data[0,index_array[0],0:2], data[0,index_array,0:2]), axis=-1))
+            iou = intersection / (areas[index_array[0]] + areas[index_array] - intersection)
             index_array = index_array[np.where(iou <= self.iou_threshold)]
         return data[:,keep,:]
