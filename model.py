@@ -44,63 +44,55 @@ class Model:
         elif self.runtime == 'tflite':
             import tensorflow.lite as tflite
             try:
-                delegate = tflite.experimental.load_delegate(EDGETPU_SHARED_LIB)
-                self.interpreter = tflite.Interpreter(self.model_path, experimental_delegates=[delegate])
+                self.interpreter = tflite.Interpreter(self.model_path, experimental_delegates=[tflite.experimental.load_delegate(EDGETPU_SHARED_LIB)])
                 print('EdgeTPU delegate found!')
             except Exception as e:
-                print('EdgeTPU delegate NOT found')
                 self.interpreter = tflite.Interpreter(self.model_path)                
+                print('EdgeTPU delegate NOT found')
         else:
             raise NotImplementedError(self.runtime)
         
     def __call__(self, img_path:str) -> list[ArrayLike]:
-        self.img_path = img_path
         model_input = self.preprocess(img_path)
         model_outputs = self.run_inference(model_input)
         if self.do_postprocessing:
             self.postprocessor_inputs = self.infer_postprocessor_input_order(model_outputs) if self.infer_postprocessor_inputs else self.postprocessor_inputs
-            quant_params = None if self.get_output_dtype() == np.float32 else [self.get_output_quant_params()[i] for i in self.postprocessor_inputs]
-            return self.postprocess([model_outputs[i] for i in self.postprocessor_inputs], quant_params=quant_params)
+            quant_params = None if self.output_dtype is np.float32 else [self.output_quant_params[i] for i in self.postprocessor_inputs]
+            return self.postprocess([model_outputs[i] for i in self.postprocessor_inputs], img_path=img_path, quant_params=quant_params)
         return model_outputs
-    
-    def infer_postprocessor_input_order(self, model_outputs: list[ArrayLike]) -> list[int]:
-        if not self.do_bbox_decoding:
-            return [0]
-        num_classes = -1
-        for o in model_outputs:
-            if o.shape[2] != 64:
-                num_classes = o.shape[2]
-                break
-        assert num_classes != -1, 'cannot infer postprocessor inputs via output shape if there are 64 classes'
-        return [i for i,_ in sorted(enumerate(model_outputs), key = lambda x: (x[1].shape[2] if num_classes > 64 else -x[1].shape[2], -x[1].shape[1]))]
 
-    def get_input_img_shape(self) -> tuple[int]:
+    @property
+    def input_img_shape(self) -> tuple[int]:
         if self.runtime == 'onnx':
             n, c, h, w = self.interpreter.get_inputs()[0].shape
         elif self.runtime == 'tflite':
             n, h, w, c = self.interpreter.get_input_details()[0]['shape']
         return h, w
 
-    def get_input_dtype(self):
+    @property
+    def input_dtype(self):
         if self.runtime == 'onnx':
             return np.float32  # only support float inputs/outputs for onnx
         elif self.runtime == 'tflite':
             return self.interpreter.get_input_details()[0]['dtype']
         
-    def get_output_dtype(self):
+    @property
+    def output_dtype(self):
         if self.runtime == 'onnx':
             return np.float32  # only support float inputs/outputs for onnx
         elif self.runtime == 'tflite':
             return self.interpreter.get_output_details()[0]['dtype']
         
-    def get_input_quant_params(self) -> tuple[float]:
+    @property
+    def input_quant_params(self) -> tuple[float]:
         assert self.runtime == 'tflite'
-        assert self.get_input_dtype() == np.uint8 or self.get_input_dtype() == np.int8
+        assert self.input_dtype in (np.uint8, np.int8)
         return self.interpreter.get_input_details()[0]['quantization']
     
-    def get_output_quant_params(self):
+    @property
+    def output_quant_params(self):
         assert self.runtime == 'tflite'
-        assert self.get_input_dtype() == np.uint8 or self.get_input_dtype() == np.int8
+        assert self.input_dtype in (np.uint8, np.int8)
         return [details['quantization'] for details in self.interpreter.get_output_details()]
 
     def preprocess(self, img_path:str, pad_color:Optional[tuple[int]]=(0, 0, 0)) -> ArrayLike:
@@ -108,7 +100,7 @@ class Model:
         if len(img_arr.shape) == 2:
             img_arr = cv2.cvtColor(img_arr, cv2.COLOR_GRAY2RGB)
         orig_h, orig_w = img_arr.shape[:-1]
-        input_h, input_w = self.get_input_img_shape()
+        input_h, input_w = self.input_img_shape
         ratio = min(input_h / orig_h, input_w / orig_w)
         new_h, new_w = int(orig_h * ratio), int(orig_w * ratio)
         img_arr = cv2.resize(img_arr, (new_w, new_h))  # resize
@@ -116,10 +108,10 @@ class Model:
         img_arr = cv2.copyMakeBorder(img_arr, dh // 2, -(dh // -2), dw // 2, -(dw // -2), cv2.BORDER_CONSTANT, value=pad_color)  # letterboxing
         img_arr = img_arr[np.newaxis, ...]  # add batch dim
         img_arr = img_arr.astype(np.float32) / 255.0  # normalize
-        if self.get_input_dtype() == np.uint8 or self.get_input_dtype() == np.int8:
-            scale, zero = self.get_input_quant_params()
+        if self.input_dtype in (np.uint8, np.int8):
+            scale, zero = self.input_quant_params
             img_arr = img_arr / scale + zero
-            img_arr = img_arr.astype(self.get_input_dtype())
+            img_arr = img_arr.astype(self.input_dtype)
         if self.runtime == 'onnx':
             return np.transpose(img_arr, (0, 3, 1, 2))  # nhwc --> nchw
         return img_arr
@@ -137,15 +129,26 @@ class Model:
         else:
             raise NotImplementedError(self.runtime)
 
+    def infer_postprocessor_input_order(self, model_outputs: list[ArrayLike]) -> list[int]:
+        if not self.do_bbox_decoding:
+            return [0]
+        num_classes = -1
+        for o in model_outputs:
+            if o.shape[2] != 64:
+                num_classes = o.shape[2]
+                break
+        assert num_classes != -1, 'cannot infer postprocessor inputs via output shape if there are 64 classes'
+        return [i for i,_ in sorted(enumerate(model_outputs), key = lambda x: (x[1].shape[2] if num_classes > 64 else -x[1].shape[2], -x[1].shape[1]))]
+
     def generate_xy_anchor_grid(self, num_preds:int) -> tuple[int, ArrayLike]:
         a = np.zeros((2, num_preds))
-        h, w = self.get_input_img_shape()
+        h, w = self.input_img_shape
         stride = int(math.sqrt((h * w) / num_preds))
         maxh, maxw = h // stride, w // stride
         a = np.stack((np.tile(np.arange(maxw), maxh), np.repeat(np.arange(maxh), maxw)), axis=-1) + 0.5
         return stride, a
 
-    def postprocess(self, model_outputs:list[ArrayLike], quant_params:Optional[list[tuple[float]]]=None) -> Results:
+    def postprocess(self, model_outputs:list[ArrayLike], img_path:str, quant_params:Optional[list[tuple[float]]]=None) -> Results:
         if quant_params is not None:  # dequantize
             for i in range(len(model_outputs)):
                 scale, zero = quant_params[i]
@@ -178,7 +181,7 @@ class Model:
         output = output[:, np.where(np.max(output[0, :, 4:], axis=1) > self.conf_threshold)[0], :]
         output[0,:,:4] = np.hstack((output[0,:,:2] - output[0,:,2:4] / 2, output[0,:,:2] + output[0,:,2:4] / 2))  # xywh to xyxy
         output = self.non_max_suppression(output)
-        return Results(output, img_path=self.img_path, model_input_shape=self.get_input_img_shape(), labels_dict=self.labels)
+        return Results(output, img_path=img_path, model_input_shape=self.input_img_shape, labels_dict=self.labels)
 
     def non_max_suppression(self, data:ArrayLike) -> ArrayLike:
         scores = np.max(data[0, :, 4:], axis=1).reshape(-1)
